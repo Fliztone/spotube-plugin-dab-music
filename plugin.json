@@ -1,11 +1,11 @@
 {
   "version": "1.0.1",
-  "name": "DAB Music",
+  "name": "DAB Flizzy",
   "author": "Kingkor Roy Tirtho",
   "description": "dab.yeet.su audio source plugin for Spotube",
   "entryPoint": "DABMusicAudioSourcePlugin",
   "apis": ["localstorage", "webview"],
   "abilities": ["audio-source", "authentication"],
-  "repository": "https://github.com/KRTirtho/spotube-plugin-dab-music",
+  "repository": "https://github.com/Fliztone/spotube-plugin-dab-music",
   "pluginApiVersion": "2.0.0"
 }

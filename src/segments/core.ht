@@ -24,11 +24,9 @@ class CorePlugin {
 
     return client.get_req(
       "https://api.github.com/repos/KRTirtho/spotube-plugin-dab-music/releases/latest",
-      options: RequestOptions(
-        headers: {
-          "Accept": "application/vnd.github.v3+json"
-        }.toJson()
-      ),
+      headers: {
+        "Accept": "application/vnd.github.v3+json"
+      }.toJson(),
     ).then((res) {
       var data = res.data
       var latestVersion = data["tag_name"].split(".")

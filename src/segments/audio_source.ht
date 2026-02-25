@@ -2,7 +2,6 @@ import "module:std" as std
 
 var HttpClient = std.HttpClient
 var HttpResponse = std.HttpResponse
-var RequestOptions = std.RequestOptions
 
 class Converter {
   static fun toSpotubeMatchObject(res: List) -> List<Map> {
@@ -91,7 +90,7 @@ class AudioSourceEndpoint {
         "type": "track",
         "limit": "5"
       }.toJson(),
-      options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
+      options: {"Cookie": cookieHeader}.toJson()
     ).then((res) {
       print("[DEBUG] matches() - Response status: ${res.statusCode}")
       print("[DEBUG] matches() - Response data: ${res.data}")
@@ -104,7 +103,7 @@ class AudioSourceEndpoint {
             "type": "track",
             "limit": "5"
           }.toJson(),
-          options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
+          options: {"Cookie": cookieHeader}.toJson()
         ).then((res)=> Converter.toSpotubeMatchObject(res.data["tracks"]))
       }
       
@@ -126,7 +125,7 @@ class AudioSourceEndpoint {
         "trackId": match["id"],
         "quality": 27
       }.toJson(),
-      options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
+      options: {"Cookie": cookieHeader}.toJson()
     ).then((hiRes){
       print("[DEBUG] streams() - hiRes status: ${hiRes.statusCode}")
       
@@ -136,7 +135,7 @@ class AudioSourceEndpoint {
           "trackId": match["id"],
           "quality": 5
         }.toJson(),
-        options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
+        options: {"Cookie": cookieHeader}.toJson()
       ).then((lowRes){
         print("[DEBUG] streams() - lowRes status: ${lowRes.statusCode}")
         

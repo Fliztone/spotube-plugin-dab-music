@@ -18,7 +18,7 @@ class Converter {
     }).toList()
   }
 
-  static fun toSpotubeStreamObject(streams: List) -> List<Map> {
+  static fun toSpotubeStreamObject(streams: List, cookieHeader: string) -> List {
     return [
       {
         "url": streams[0]["url"],
@@ -26,22 +26,35 @@ class Converter {
         "type": "lossless",
         "bitDepth": 24,
         "sampleRate": 96000,
+        "headers": {"Cookie": cookieHeader}.toJson(),
       }.toJson(),
       {
         "url": streams[1]["url"],
-        "container": "mp3",
-        "type": "lossless",
+        "container": "aac",
+        "type": "lossy",
         "codec": "aac",
         "bitrate": 320000,
+        "headers": {"Cookie": cookieHeader}.toJson(),
       }.toJson()
     ]
   }
 }
 
-
 class AudioSourceEndpoint {
   var api: HttpClient
-  construct (this.api)
+  var auth: Map
+
+  construct (this.api, this.auth)
+
+  fun getCookieHeader() -> string {
+    final session = auth?["session"]
+    if (session == null) return ""
+    
+    if (session is List) {
+      return session.map((d)=>d.split("; ")[0]).join("; ")
+    }
+    return session.toString().split("; ")[0]
+  }
 
   // List of containers and their supported qualities
   get supportedPresets -> List {
@@ -68,14 +81,21 @@ class AudioSourceEndpoint {
     var query = hasISRC ? track["isrc"] 
       : "${track["name"]} ${track["artists"][0]["name"]}"
 
+    final cookieHeader = getCookieHeader()
+    print("[DEBUG] matches() - Cookie header: ${cookieHeader}")
+
     return api.get_req(
       "/search",
       queryParameters: {
         "q": query,
         "type": "track",
         "limit": "5"
-      }.toJson()
+      }.toJson(),
+      options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
     ).then((res) {
+      print("[DEBUG] matches() - Response status: ${res.statusCode}")
+      print("[DEBUG] matches() - Response data: ${res.data}")
+      
       if(hasISRC && (res.data["tracks"] == null || res.data["tracks"].isEmpty)) {
         return api.get_req(
           "/search",
@@ -83,7 +103,8 @@ class AudioSourceEndpoint {
             "q": "${track["name"]} ${track["artists"][0]["name"]}",
             "type": "track",
             "limit": "5"
-          }.toJson()
+          }.toJson(),
+          options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
         ).then((res)=> Converter.toSpotubeMatchObject(res.data["tracks"]))
       }
       
@@ -96,24 +117,33 @@ class AudioSourceEndpoint {
   /// @param match - Map<SpotubeAudioSourceStreamObject>
   /// @returns Future<List<SpotubeAudioSourceStreamObject>>
   fun streams(match: Map) -> List {
+    final cookieHeader = getCookieHeader()
+    print("[DEBUG] streams() - Cookie header: ${cookieHeader}")
+    
     return api.get_req(
       "/stream",
       queryParameters: {
         "trackId": match["id"],
         "quality": 27
-      }.toJson()
+      }.toJson(),
+      options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
     ).then((hiRes){
+      print("[DEBUG] streams() - hiRes status: ${hiRes.statusCode}")
+      
       return api.get_req(
         "/stream",
         queryParameters: {
           "trackId": match["id"],
           "quality": 5
-        }.toJson()
+        }.toJson(),
+        options: RequestOptions(headers: {"Cookie": cookieHeader}.toJson())
       ).then((lowRes){
+        print("[DEBUG] streams() - lowRes status: ${lowRes.statusCode}")
+        
         return Converter.toSpotubeStreamObject([
           hiRes.data,
           lowRes.data,
-        ])
+        ], cookieHeader)
       })
     })
   }

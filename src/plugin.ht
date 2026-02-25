@@ -25,7 +25,7 @@ class DABMusicAudioSourcePlugin {
     
     auth = AuthEndpoint(api)
     core = CorePlugin(api)
-    audioSource = AudioSourceEndpoint(api)
+    audioSource = AudioSourceEndpoint(api, auth.credentials)
 
     auth.authStateStream.listen((event) {
       setAccessToken()
@@ -42,7 +42,7 @@ class DABMusicAudioSourcePlugin {
       )
     )
 
-    audioSource = AudioSourceEndpoint(api)
+    audioSource = AudioSourceEndpoint(api, auth.credentials)
   }
 }
 

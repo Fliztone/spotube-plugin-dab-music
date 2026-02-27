@@ -3,16 +3,13 @@ import 'module:spotube_plugin' as spotube
 
 var StreamController = std.StreamController
 var Stream = std.Stream
-var StreamSubscription = std.StreamSubscription
 var HttpClient = std.HttpClient
-var HttpResponse = std.HttpResponse
-var RequestOptions = std.RequestOptions
 var SpotubeForm = spotube.SpotubeForm
 var LocalStorage = spotube.LocalStorage
 var JSON = std.JSON
 
 class AuthEndpoint {
-  final api: HttpClient
+  var api: HttpClient
   final controller: StreamController
 
   var credentials: Map
@@ -21,12 +18,24 @@ class AuthEndpoint {
 
   construct (this.api){
     controller = StreamController.broadcast()
-
     initialize()
   }
 
-  fun getCookieHeaderValue() -> string {    
-    return credentials?["session"]?.map((d)=>d.split("; ")[0]).join("; ") ?? ""
+  /// Called by the plugin entryPoint after authentication to update the api
+  /// client with authenticated headers.
+  fun updateApi(newApi: HttpClient) {
+    api = newApi
+  }
+
+  /// Extracts the cookie value from credentials for use in request headers.
+  /// Handles both List<string> and string session formats.
+  fun getCookieHeaderValue() -> string {
+    final session = credentials?["session"]
+    if (session == null) return ""
+    if (session is List) {
+      return session.map((d) => d.split("; ")[0]).join("; ")
+    }
+    return session.toString().split("; ")[0]
   }
 
   fun login(email: string, password: string) {
@@ -39,45 +48,66 @@ class AuthEndpoint {
     ).then((res) {
       var data = res.data
 
-      if(data["user"] == null) {
+      if (data["user"] == null) {
         throw "Invalid email or password"
       }
+
+      // Set-Cookie header can come back under different casings
+      var sessionCookies = res.headers["Set-Cookie"]
+        ?? res.headers["set-cookie"]
+        ?? res.headers["Cookie"]
+        ?? res.headers["cookie"]
 
       credentials = {
         "email": email,
         "password": password,
-        "session": res.headers["Cookie"] ?? res.headers["Set-Cookie"] ?? res.headers["cookie"] ?? res.headers["set-cookie"]
+        "session": sessionCookies
       }.toJson()
 
       return LocalStorage.setString("creds", JSON.encode(credentials)).then(() {
-        controller.add({ type: "login" }.toJson())
+        controller.add({ "type": "login" }.toJson())
       })
     })
   }
 
   fun initialize() {
-    LocalStorage.getString("creds").then((credStr){
-      if (credStr == null || credStr.isEmpty) {
-        return
-      }
+    LocalStorage.getString("creds").then((credStr) {
+      if (credStr == null || credStr.isEmpty) return
 
       credentials = JSON.decode(credStr)
       final email = credentials["email"]
       final password = credentials["password"]
+      final cookieValue = getCookieHeaderValue()
 
+      // Verify if the stored session is still valid
       api.get_req(
         "/auth/me",
-        options: RequestOptions(headers: {"Cookie": credentials?["session"]}.toJson())
-      ).then((res){
-        if(res.data["user"] != null) {
-          controller.add({ type: "recovered" }.toJson())
-        } else if(email != null && password != null && email.isNotEmpty && password.isNotEmpty) {
+        options: {
+          "headers": { "Cookie": cookieValue }.toJson()
+        }.toJson()
+      ).then((res) {
+        if (res.data != null && res.data["user"] != null) {
+          controller.add({ "type": "recovered" }.toJson())
+        } else if (email != null && password != null && email.isNotEmpty && password.isNotEmpty) {
+          // Session expired — re-login with stored credentials
           login(email, password)
         }
       })
     })
   }
-  
+
+  /// Re-authenticates using stored credentials when a 403 is encountered.
+  /// Returns a Future that completes when re-login is done (or null if no
+  /// stored credentials are available).
+  fun reAuthenticate() {
+    final email = credentials?["email"]
+    final password = credentials?["password"]
+    if (email == null || password == null || email.isEmpty || password.isEmpty) {
+      return null
+    }
+    return login(email, password)
+  }
+
   fun isAuthenticated() -> bool {
     return credentials?["session"] != null
   }
@@ -87,36 +117,34 @@ class AuthEndpoint {
       "DAB Music Login",
       [
         {
-          objectType: "text",
-          text: "Your email",
+          "objectType": "text",
+          "text": "Your email",
         }.toJson(),
         {
-          objectType: "input",
-          id: "email",
-          variant: "text",
-          placeholder: "you@example.com",
-          required: true,
+          "objectType": "input",
+          "id": "email",
+          "variant": "text",
+          "placeholder": "you@example.com",
+          "required": true,
         }.toJson(),
         {
-          objectType: "text",
-          text: "Your password",
+          "objectType": "text",
+          "text": "Your password",
         }.toJson(),
         {
-          objectType: "input",
-          id: "password",
-          variant: "text",
-          placeholder: "Enter your DAB Music password",
-          required: true,
+          "objectType": "input",
+          "id": "password",
+          "variant": "password",
+          "placeholder": "Enter your DAB Music password",
+          "required": true,
         }.toJson(),
         {
-          objectType: "text",
-          text: "If you've no accounts, sign up at [dab.yeet.su](https://dab.yeet.su/register)",
+          "objectType": "text",
+          "text": "If you have no account, sign up at [dab.yeet.su](https://dab.yeet.su/register)",
         }.toJson(),
       ]
-    ).then((values){
-      if (values == null) {
-        return
-      }
+    ).then((values) {
+      if (values == null) return
 
       var email
       var password
@@ -132,10 +160,10 @@ class AuthEndpoint {
     })
   }
 
-	fun logout() {
+  fun logout() {
     return LocalStorage.remove("creds").then(() {
       credentials = null
-      controller.add({ type: "logout" }.toJson())
+      controller.add({ "type": "logout" }.toJson())
     })
   }
 }

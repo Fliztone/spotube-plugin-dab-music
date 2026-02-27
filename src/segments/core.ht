@@ -23,10 +23,10 @@ class CorePlugin {
     var patch = int.parse(versionParts[2])
 
     return client.get_req(
-      "https://api.github.com/repos/KRTirtho/spotube-plugin-dab-music/releases/latest",
-      headers: {
-        "Accept": "application/vnd.github.v3+json"
-      }.toJson(),
+      "https://api.github.com/repos/Fliztone/spotube-plugin-dab-music/releases/latest",
+      options: {
+        "headers": { "Accept": "application/vnd.github.v3+json" }.toJson()
+      }.toJson()
     ).then((res) {
       var data = res.data
       var latestVersion = data["tag_name"].split(".")
@@ -66,12 +66,7 @@ class CorePlugin {
   /// Returns the support information for the plugin in Markdown or plain text.
   /// Supports images and links.
   get support -> string {
-    // TODO: Return support information
-    return "
-# Support
-
-Have no idea who created it. You can only pray for the man/women who created this HiFi streaming platform.
-"
+    return "# DAB Flizzy Plugin Support\n\nThis plugin provides high-resolution audio streaming via [DAB Music](https://dab.yeet.su).\n\n## Troubleshooting\n- If you get 403 errors, try logging out and logging back in.\n- Make sure you have a valid DAB Music account at [dab.yeet.su](https://dab.yeet.su).\n\n## Source\nPlugin repository: [Fliztone/spotube-plugin-dab-music](https://github.com/Fliztone/spotube-plugin-dab-music)"
   }
 
   /// Scrobble the provided details to the scrobbling service supported by the plugin.

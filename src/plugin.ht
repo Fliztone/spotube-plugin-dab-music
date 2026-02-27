@@ -6,8 +6,6 @@ import { CorePlugin } from './segments/core.ht'
 
 var HttpClient = std.HttpClient
 var HttpBaseOptions = std.HttpBaseOptions
-var Stream = std.Stream
-var StreamSubscription = std.StreamSubscription
 
 class DABMusicAudioSourcePlugin {
   var auth: AuthEndpoint
@@ -25,7 +23,8 @@ class DABMusicAudioSourcePlugin {
     
     auth = AuthEndpoint(api)
     core = CorePlugin(api)
-    audioSource = AudioSourceEndpoint(api, auth.credentials)
+    // Pass auth object itself so AudioSourceEndpoint always reads live credentials
+    audioSource = AudioSourceEndpoint(api, auth)
 
     auth.authStateStream.listen((event) {
       setAccessToken()
@@ -42,8 +41,10 @@ class DABMusicAudioSourcePlugin {
       )
     )
 
-    audioSource = AudioSourceEndpoint(api, auth.credentials)
+    // Update the api on auth and audioSource with the new authenticated client
+    auth.updateApi(api)
+    audioSource = AudioSourceEndpoint(api, auth)
   }
 }
 
-export { TemplateMetadataProviderPlugin }
+export { DABMusicAudioSourcePlugin }

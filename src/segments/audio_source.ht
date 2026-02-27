@@ -1,11 +1,11 @@
 import "module:std" as std
+import { AuthEndpoint } from "./auth.ht"
 
 var HttpClient = std.HttpClient
-var HttpResponse = std.HttpResponse
 
 class Converter {
   static fun toSpotubeMatchObject(res: List) -> List<Map> {
-    return res.map((d){
+    return res.map((d) {
       return {
         "id": d["id"].toString(),
         "title": d["title"],
@@ -17,23 +17,23 @@ class Converter {
     }).toList()
   }
 
-  static fun toSpotubeStreamObject(streams: List, cookieHeader: string) -> List {
+  static fun toSpotubeStreamObject(hiResData: Map, lowResData: Map, cookieHeader: string) -> List {
     return [
       {
-        "url": streams[0]["url"],
+        "url": hiResData["url"],
         "container": "flac",
         "type": "lossless",
         "bitDepth": 24,
         "sampleRate": 96000,
-        "headers": {"Cookie": cookieHeader}.toJson(),
+        "headers": { "Cookie": cookieHeader }.toJson(),
       }.toJson(),
       {
-        "url": streams[1]["url"],
+        "url": lowResData["url"],
         "container": "aac",
         "type": "lossy",
         "codec": "aac",
         "bitrate": 320000,
-        "headers": {"Cookie": cookieHeader}.toJson(),
+        "headers": { "Cookie": cookieHeader }.toJson(),
       }.toJson()
     ]
   }
@@ -41,48 +41,45 @@ class Converter {
 
 class AudioSourceEndpoint {
   var api: HttpClient
-  var auth: Map
+  // Accept the full AuthEndpoint so we always read the latest credentials
+  var auth: AuthEndpoint
 
   construct (this.api, this.auth)
 
   fun getCookieHeader() -> string {
-    final session = auth?["session"]
-    if (session == null) return ""
-    
-    if (session is List) {
-      return session.map((d)=>d.split("; ")[0]).join("; ")
-    }
-    return session.toString().split("; ")[0]
+    return auth.getCookieHeaderValue()
+  }
+
+  fun buildOptions() -> Map {
+    final cookie = getCookieHeader()
+    return {
+      "headers": { "Cookie": cookie }.toJson()
+    }.toJson()
   }
 
   // List of containers and their supported qualities
   get supportedPresets -> List {
     return [
-      { 
-        type: "lossless", 
-        name: "flac",
-        qualities: [
-          { bitDepth: 24, sampleRate: 96000 },
-          { bitDepth: 24, sampleRate: 44100 },
-          { bitDepth: 16, sampleRate: 44100 }
+      {
+        "type": "lossless",
+        "name": "flac",
+        "qualities": [
+          { "bitDepth": 24, "sampleRate": 96000 }.toJson(),
+          { "bitDepth": 24, "sampleRate": 44100 }.toJson(),
+          { "bitDepth": 16, "sampleRate": 44100 }.toJson()
         ]
       }.toJson(),
-      { type: "lossy", name: "mp3", qualities: [ { bitrate: 320000 } ] }.toJson(),
+      {
+        "type": "lossy",
+        "name": "aac",
+        "qualities": [ { "bitrate": 320000 }.toJson() ]
+      }.toJson(),
     ]
   }
-  
-  /// Find matching audio sources for a given track. It can return one or multiple matches.
-  /// The first match is considered the best match.
-  /// @param track - Map<SpotubeTrackObject>
-  /// @returns Future<List<SpotubeAudioSourceMatchObject>>
-  fun matches(track: Map) -> List {
-    final hasISRC = track["isrc"] != null && track["isrc"].isNotEmpty
-    var query = hasISRC ? track["isrc"] 
-      : "${track["name"]} ${track["artists"][0]["name"]}"
 
-    final cookieHeader = getCookieHeader()
-    print("[DEBUG] matches() - Cookie header: ${cookieHeader}")
-
+  /// Perform a search request and retry once after re-authentication if a 403
+  /// is received.
+  fun searchWithRetry(query: string) {
     return api.get_req(
       "/search",
       queryParameters: {
@@ -90,59 +87,93 @@ class AudioSourceEndpoint {
         "type": "track",
         "limit": "5"
       }.toJson(),
-      options: {"Cookie": cookieHeader}.toJson()
+      options: buildOptions()
     ).then((res) {
-      print("[DEBUG] matches() - Response status: ${res.statusCode}")
-      print("[DEBUG] matches() - Response data: ${res.data}")
-      
-      if(hasISRC && (res.data["tracks"] == null || res.data["tracks"].isEmpty)) {
-        return api.get_req(
-          "/search",
-          queryParameters: {
-            "q": "${track["name"]} ${track["artists"][0]["name"]}",
-            "type": "track",
-            "limit": "5"
-          }.toJson(),
-          options: {"Cookie": cookieHeader}.toJson()
-        ).then((res)=> Converter.toSpotubeMatchObject(res.data["tracks"]))
+      if (res.statusCode == 403) {
+        // Session expired — re-authenticate then retry
+        return auth.reAuthenticate().then((_) {
+          return api.get_req(
+            "/search",
+            queryParameters: {
+              "q": query,
+              "type": "track",
+              "limit": "5"
+            }.toJson(),
+            options: buildOptions()
+          )
+        })
       }
-      
+      return res
+    })
+  }
+
+  /// Find matching audio sources for a given track.
+  /// @param track - Map<SpotubeTrackObject>
+  /// @returns Future<List<SpotubeAudioSourceMatchObject>>
+  fun matches(track: Map) -> List {
+    final hasISRC = track["isrc"] != null && track["isrc"].isNotEmpty
+    final query = hasISRC
+      ? track["isrc"]
+      : "${track["name"]} ${track["artists"][0]["name"]}"
+
+    return searchWithRetry(query).then((res) {
+      if (hasISRC && (res.data["tracks"] == null || res.data["tracks"].isEmpty)) {
+        // ISRC search returned nothing — fall back to title+artist
+        final fallbackQuery = "${track["name"]} ${track["artists"][0]["name"]}"
+        return searchWithRetry(fallbackQuery).then((fallbackRes) {
+          return Converter.toSpotubeMatchObject(fallbackRes.data["tracks"])
+        })
+      }
       return Converter.toSpotubeMatchObject(res.data["tracks"])
     })
   }
 
   /// For the given match, return all available streams.
-  /// Each stream represents a unique combination of container and quality.
-  /// @param match - Map<SpotubeAudioSourceStreamObject>
+  /// @param match - Map<SpotubeAudioSourceMatchObject>
   /// @returns Future<List<SpotubeAudioSourceStreamObject>>
   fun streams(match: Map) -> List {
-    final cookieHeader = getCookieHeader()
-    print("[DEBUG] streams() - Cookie header: ${cookieHeader}")
-    
     return api.get_req(
       "/stream",
       queryParameters: {
         "trackId": match["id"],
         "quality": 27
       }.toJson(),
-      options: {"Cookie": cookieHeader}.toJson()
-    ).then((hiRes){
-      print("[DEBUG] streams() - hiRes status: ${hiRes.statusCode}")
-      
+      options: buildOptions()
+    ).then((hiRes) {
+      if (hiRes.statusCode == 403) {
+        // Session expired — re-authenticate then retry both stream requests
+        return auth.reAuthenticate().then((_) {
+          return api.get_req(
+            "/stream",
+            queryParameters: {
+              "trackId": match["id"],
+              "quality": 27
+            }.toJson(),
+            options: buildOptions()
+          ).then((hiRes2) {
+            return api.get_req(
+              "/stream",
+              queryParameters: {
+                "trackId": match["id"],
+                "quality": 5
+              }.toJson(),
+              options: buildOptions()
+            ).then((lowRes2) {
+              return Converter.toSpotubeStreamObject(hiRes2.data, lowRes2.data, getCookieHeader())
+            })
+          })
+        })
+      }
+
       return api.get_req(
         "/stream",
         queryParameters: {
           "trackId": match["id"],
           "quality": 5
         }.toJson(),
-        options: {"Cookie": cookieHeader}.toJson()
-      ).then((lowRes){
-        print("[DEBUG] streams() - lowRes status: ${lowRes.statusCode}")
-        
-        return Converter.toSpotubeStreamObject([
-          hiRes.data,
-          lowRes.data,
-        ], cookieHeader)
+        options: buildOptions()
+      ).then((lowRes) {
+        return Converter.toSpotubeStreamObject(hiRes.data, lowRes.data, getCookieHeader())
       })
     })
   }
